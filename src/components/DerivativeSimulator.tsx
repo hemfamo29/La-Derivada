@@ -1,27 +1,35 @@
 import { useEffect, useRef, useState, MouseEvent } from 'react';
+import * as math from 'mathjs';
 
 interface DerivativeSimulatorProps {
   isPaused: boolean;
   showLabels: boolean;
+  expression: string;
 }
 
-export default function DerivativeSimulator({ isPaused, showLabels }: DerivativeSimulatorProps) {
+export default function DerivativeSimulator({ isPaused, showLabels, expression }: DerivativeSimulatorProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const [mouseX, setMouseX] = useState<number | null>(null);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
+  
+  // State for points in mathematical coordinates
+  const [pX, setPX] = useState(1);
+  const [qX, setQX] = useState(2);
+  const [dragTarget, setDragTarget] = useState<'P' | 'Q' | null>(null);
+  const [errorStatus, setErrorStatus] = useState<string | null>(null);
+
+  // Constants for scaling
+  const SCALE_X = 50; 
+  const SCALE_Y = 50;
 
   // Handle Resize
   useEffect(() => {
     if (!containerRef.current) return;
-
     const observer = new ResizeObserver((entries) => {
       for (const entry of entries) {
-        const { width, height } = entry.contentRect;
-        setDimensions({ width, height });
+        setDimensions({ width: entry.contentRect.width, height: entry.contentRect.height });
       }
     });
-
     observer.observe(containerRef.current);
     return () => observer.disconnect();
   }, []);
@@ -29,8 +37,7 @@ export default function DerivativeSimulator({ isPaused, showLabels }: Derivative
   // Drawing Loop
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
-
+    if (!canvas || dimensions.width === 0) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
@@ -38,13 +45,44 @@ export default function DerivativeSimulator({ isPaused, showLabels }: Derivative
     canvas.width = width;
     canvas.height = height;
 
-    // Mathematical configuration
-    // f(x) = 0.005 * (x - width/2)^2 + 100
-    const f = (x: number) => 0.005 * Math.pow(x - width / 2, 2) + 100;
-    const df = (x: number) => 0.01 * (x - width / 2); // f'(x)
+    const centerX = width / 2;
+    const centerY = height / 2;
+
+    let compiledExpr: math.EvalFunction;
+    try {
+      compiledExpr = math.compile(expression);
+      setErrorStatus(null);
+    } catch {
+      setErrorStatus("Error en la expresión");
+      return;
+    }
+
+    const f = (x: number) => {
+      try {
+        const val = compiledExpr.evaluate({ x });
+        return typeof val === 'number' ? val : NaN;
+      } catch { return NaN; }
+    };
+
+    // Numerical Derivative Check for Differentiability
+    const checkDifferentiability = (x: number) => {
+      const epsilon = 0.0001;
+      const y1 = f(x - epsilon);
+      const y2 = f(x);
+      const y3 = f(x + epsilon);
+
+      if (isNaN(y2) || !isFinite(y2)) return { status: 'undefined', msg: 'Función no definida aquí' };
+      
+      const leftD = (y2 - y1) / epsilon;
+      const rightD = (y3 - y2) / epsilon;
+
+      if (Math.abs(leftD - rightD) > 0.5) return { status: 'non-diff', msg: 'Pico o esquina (No derivable)' };
+      if (Math.abs(leftD) > 1000) return { status: 'vertical', msg: 'Tangente vertical' };
+      
+      return { status: 'ok', value: (leftD + rightD) / 2 };
+    };
 
     let animationId: number;
-
     const draw = () => {
       if (isPaused) {
         animationId = requestAnimationFrame(draw);
@@ -53,7 +91,7 @@ export default function DerivativeSimulator({ isPaused, showLabels }: Derivative
 
       ctx.clearRect(0, 0, width, height);
 
-      // 1. Draw Grid
+      // 1. Grid & Axes
       ctx.strokeStyle = '#f1f1f1';
       ctx.lineWidth = 1;
       for (let i = 0; i < width; i += 50) {
@@ -63,86 +101,96 @@ export default function DerivativeSimulator({ isPaused, showLabels }: Derivative
         ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(width, i); ctx.stroke();
       }
 
-      // 2. Draw Axes
       ctx.strokeStyle = '#e2e8f0';
       ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.moveTo(width / 2, 0); ctx.lineTo(width / 2, height); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(0, height - 50); ctx.lineTo(width, height - 50); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(centerX, 0); ctx.lineTo(centerX, height); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, centerY); ctx.lineTo(width, centerY); ctx.stroke();
 
-      // 3. Draw Main Function Curve
-      ctx.strokeStyle = '#1e293b'; // Slate 800
+      // 2. Curve
+      ctx.strokeStyle = '#0f172a'; 
       ctx.lineWidth = 3;
       ctx.beginPath();
-      for (let x = 0; x < width; x++) {
-        ctx.lineTo(x, height - f(x));
+      let first = true;
+      for (let screenX = 0; screenX < width; screenX++) {
+        const mathX = (screenX - centerX) / SCALE_X;
+        const mathY = f(mathX);
+        if (!isNaN(mathY) && isFinite(mathY)) {
+          const screenY = centerY - (mathY * SCALE_Y);
+          if (first) ctx.moveTo(screenX, screenY);
+          else ctx.lineTo(screenX, screenY);
+          first = false;
+        } else {
+          first = true;
+        }
       }
       ctx.stroke();
 
-      // 4. Points & Lines
-      const pX = width / 2 + 80;
-      const pY = height - f(pX);
-      const qX = mouseX !== null ? mouseX : pX + 100;
-      const qY = height - f(qX);
+      const screenPX = centerX + pX * SCALE_X;
+      const screenPY = centerY - f(pX) * SCALE_Y;
+      const screenQX = centerX + qX * SCALE_X;
+      const screenQY = centerY - f(qX) * SCALE_Y;
 
-      // Secant Line
-      ctx.setLineDash([8, 8]);
-      ctx.strokeStyle = '#94a3b8'; // Slate 400
-      const mSec = (qY - pY) / (qX - pX || 0.001);
-      ctx.beginPath();
-      ctx.moveTo(pX - width, pY - mSec * width);
-      ctx.lineTo(pX + width, pY + mSec * width);
-      ctx.stroke();
-      ctx.setLineDash([]);
+      // 3. Secant
+      if (!isNaN(screenPY) && !isNaN(screenQY)) {
+        ctx.setLineDash([8, 4]);
+        ctx.strokeStyle = '#94a3b8';
+        const mSec = (f(qX) - f(pX)) / (qX - pX || 0.0001);
+        ctx.beginPath();
+        ctx.moveTo(screenPX - width, screenPY + mSec * width);
+        ctx.lineTo(screenPX + width, screenPY - mSec * width);
+        ctx.stroke();
+        ctx.setLineDash([]);
 
-      // Tangent Line
-      const mTan = -df(pX); // Negated because Y points down in canvas
-      ctx.strokeStyle = '#f97316'; // Orange 500
-      ctx.lineWidth = 2.5;
-      ctx.beginPath();
-      ctx.moveTo(pX - 150, pY - mTan * 150);
-      ctx.lineTo(pX + 150, pY + mTan * 150);
-      ctx.stroke();
+        // 4. Tangent
+        const diffInfo = checkDifferentiability(pX);
+        if (diffInfo.status === 'ok') {
+          const mTan = diffInfo.value as number;
+          ctx.strokeStyle = '#f97316';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(screenPX - 150, screenPY + mTan * 150);
+          ctx.lineTo(screenPX + 150, screenPY - mTan * 150);
+          ctx.stroke();
+        }
 
-      // Points P and Q
-      // P (Fixed position for demonstration)
-      ctx.fillStyle = '#3b82f6'; // Blue 500
-      ctx.beginPath(); ctx.arc(pX, pY, 7, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = 'white'; ctx.lineWidth = 2; ctx.stroke();
+        // 5. Points
+        ctx.fillStyle = '#3b82f6'; // P
+        ctx.beginPath(); ctx.arc(screenPX, screenPY, 8, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = 'white'; ctx.lineWidth = 2; ctx.stroke();
 
-      // Q (Interactive)
-      ctx.fillStyle = '#ef4444'; // Red 500
-      ctx.beginPath(); ctx.arc(qX, qY, 7, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = 'white'; ctx.lineWidth = 2; ctx.stroke();
+        ctx.fillStyle = '#ef4444'; // Q
+        ctx.beginPath(); ctx.arc(screenQX, screenQY, 8, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = 'white'; ctx.lineWidth = 2; ctx.stroke();
 
-      if (showLabels) {
-        // Annotation Overlay Style
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
-        ctx.shadowBlur = 10;
-        ctx.shadowColor = 'rgba(0,0,0,0.1)';
-        ctx.fillRect(30, 30, 140, 75);
-        ctx.shadowBlur = 0;
-        
-        ctx.strokeStyle = '#e2e8f0';
-        ctx.strokeRect(30, 30, 140, 75);
+        if (showLabels) {
+          // Info Panel
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+          ctx.fillRect(20, 20, 220, 100);
+          ctx.strokeStyle = '#e2e8f0';
+          ctx.strokeRect(20, 20, 220, 100);
 
-        ctx.fillStyle = '#94a3b8';
-        ctx.font = 'bold 9px font-mono, monospace';
-        ctx.fillText('PENDIENTE CALCULADA', 40, 50);
+          ctx.fillStyle = '#94a3b8';
+          ctx.font = 'bold 9px Inter';
+          ctx.fillText('ANÁLISIS DE PENDIENTE', 35, 40);
 
-        ctx.fillStyle = '#f97316';
-        ctx.font = 'bold 22px Inter, sans-serif';
-        ctx.fillText(`m = ${(-mTan).toFixed(2)}`, 40, 78);
-        
-        ctx.fillStyle = '#94a3b8';
-        ctx.font = 'italic 8px Inter, sans-serif';
-        ctx.fillText('lim h → 0', 40, 92);
+          ctx.fillStyle = '#1e293b';
+          const slopeText = Math.abs(qX - pX) < 0.01 ? 'TANGENTE' : 'SECANTE';
+          ctx.fillText(`${slopeText} m = ${( (f(qX)-f(pX))/(qX-pX) ).toFixed(3)}`, 35, 60);
 
-        // Point Labels
-        ctx.font = 'bold 10px Inter, sans-serif';
-        ctx.fillStyle = '#3b82f6';
-        ctx.fillText('P (Fijo)', pX + 12, pY);
-        ctx.fillStyle = '#ef4444';
-        ctx.fillText('Q (Variable)', qX + 12, qY);
+          if (diffInfo.status !== 'ok') {
+             ctx.fillStyle = '#ef4444';
+             ctx.font = 'bold 11px Inter';
+             ctx.fillText(`! ${diffInfo.msg}`, 35, 85);
+          } else {
+             ctx.fillStyle = '#f97316';
+             ctx.font = 'bold 11px Inter';
+             ctx.fillText(`DERIVADA f'(P) ≈ ${diffInfo.value?.toFixed(3)}`, 35, 85);
+          }
+
+          ctx.fillStyle = '#64748b';
+          ctx.font = '10px Inter';
+          ctx.fillText(`h (distancia Q-P) = ${Math.abs(qX-pX).toFixed(3)}`, 35, 105);
+        }
       }
 
       animationId = requestAnimationFrame(draw);
@@ -150,21 +198,51 @@ export default function DerivativeSimulator({ isPaused, showLabels }: Derivative
 
     animationId = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(animationId);
-  }, [dimensions, mouseX, isPaused, showLabels]);
+  }, [dimensions, pX, qX, isPaused, showLabels, expression]);
+
+  const handleMouseDown = (e: MouseEvent) => {
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+
+    const screenPX = dimensions.width / 2 + pX * SCALE_X;
+    const screenPY = dimensions.height / 2 - (math.evaluate(expression, { x: pX }) ) * SCALE_Y;
+    const screenQX = dimensions.width / 2 + qX * SCALE_X;
+    const screenQY = dimensions.height / 2 - (math.evaluate(expression, { x: qX }) ) * SCALE_Y;
+
+    const distP = Math.sqrt((mx - screenPX)**2 + (my - screenPY)**2);
+    const distQ = Math.sqrt((mx - screenQX)**2 + (my - screenQY)**2);
+
+    if (distP < 20) setDragTarget('P');
+    else if (distQ < 20) setDragTarget('Q');
+  };
 
   const handleMouseMove = (e: MouseEvent) => {
+    if (!dragTarget) return;
     const rect = canvasRef.current?.getBoundingClientRect();
-    if (rect) {
-      setMouseX(e.clientX - rect.left);
-    }
+    if (!rect) return;
+    
+    const mx = e.clientX - rect.left;
+    const newMathX = (mx - dimensions.width / 2) / SCALE_X;
+
+    if (dragTarget === 'P') setPX(newMathX);
+    else setQX(newMathX);
   };
 
   return (
     <div ref={containerRef} className="w-full h-full relative bg-white overflow-hidden rounded-xl shadow-inner border border-slate-200">
+      {errorStatus && (
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-red-600 text-white px-4 py-1 rounded-full text-xs font-bold z-10">
+          {errorStatus}
+        </div>
+      )}
       <canvas
         ref={canvasRef}
+        onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
-        onMouseLeave={() => setMouseX(null)}
+        onMouseUp={() => setDragTarget(null)}
+        onMouseLeave={() => setDragTarget(null)}
         className="cursor-crosshair w-full h-full block"
       />
     </div>

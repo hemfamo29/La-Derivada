@@ -13,6 +13,7 @@ import { Play, Pause, Tags, BookOpen } from 'lucide-react';
 export default function App() {
   const [isPaused, setIsPaused] = useState(false);
   const [showLabels, setShowLabels] = useState(true);
+  const [expression, setExpression] = useState('x^2');
 
   return (
     <div className="h-screen bg-slate-50 font-sans text-slate-900 flex flex-col selection:bg-orange-100 selection:text-orange-900 overflow-hidden border-8 border-slate-200">
@@ -21,7 +22,7 @@ export default function App() {
       <main className="flex-1 flex flex-col lg:flex-row p-6 gap-6 overflow-hidden">
         {/* Simulator Visualization */}
         <div className="flex-[2] flex flex-col gap-4 overflow-hidden">
-          <div className="flex justify-between items-center bg-slate-50/50 p-3 rounded-xl border border-slate-200 shadow-sm">
+          <div className="flex justify-between items-center bg-slate-50/50 p-3 rounded-xl border border-slate-200 shadow-sm flex-wrap gap-3">
             <div className="flex gap-2">
               <button 
                 onClick={() => setIsPaused(!isPaused)}
@@ -46,22 +47,29 @@ export default function App() {
                 Etiquetas {showLabels ? 'ON' : 'OFF'}
               </button>
             </div>
-            <div className="px-3 py-1 bg-white border border-slate-200 text-[10px] font-mono text-slate-400 rounded uppercase tracking-tighter hidden sm:block">
-              Sistema de Coordenadas Tiempo Real
+
+            <div className="flex items-center gap-2 flex-1 max-w-sm">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest px-2">f(x) =</span>
+              <input 
+                type="text" 
+                value={expression}
+                onChange={(e) => setExpression(e.target.value)}
+                placeholder="Escibe una función (ej: x^2, sin(x), abs(x))"
+                className="flex-1 bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs font-mono focus:ring-2 focus:ring-orange-500 outline-none"
+              />
             </div>
           </div>
 
           <div className="flex-1 relative bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-            <DerivativeSimulator isPaused={isPaused} showLabels={showLabels} />
+            <DerivativeSimulator isPaused={isPaused} showLabels={showLabels} expression={expression} />
           </div>
           
           <div className="flex justify-between items-center px-2">
             <p className="text-[10px] text-slate-400 font-mono uppercase tracking-widest italic">
-              * Arrastra horizontalmente para variar h
+              * Arrastra los puntos P y Q sobre la gráfica para ver el límite
             </p>
             <div className="flex gap-4 text-[10px] font-mono text-slate-500 uppercase tracking-widest">
-              <span>F(X) = X²</span>
-              <span className="text-orange-600 font-bold">Tangente Activa</span>
+              <span className="text-orange-600 font-bold">Laboratorio Interactivo</span>
             </div>
           </div>
         </div>
